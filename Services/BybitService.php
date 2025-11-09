@@ -6,6 +6,8 @@ class BybitAPI
     private $apiSecret;
     private $baseUrl;
 
+    private $depositHistoryCount = 0;
+
     public function __construct($apiKey, $apiSecret, $baseUrl)
     {
         $this->apiKey = $apiKey;
@@ -50,7 +52,7 @@ class BybitAPI
     /**
      * Calculate trading fee based on order type
      */
-    public function calculateFee($symbol, $tradeAmount, $orderType)
+    public function calculateTradingFee($symbol, $tradeAmount, $orderType)
     {
         $feeRates = $this->getTradingFeeRate($symbol, $orderType);
 
@@ -79,6 +81,8 @@ class BybitAPI
 
     /**
      * Send API request using cURL
+     * 
+     * @return mixed
      */
     private function sendRequest($endpoint, $params = [])
     {
@@ -108,7 +112,8 @@ class BybitAPI
 
 
     // Get Coin Info
-    public function getCoinInfo($coin, $chain = null) {
+    public function getCoinInfo($coin, $chain = null)
+    {
         sleep(3);
         $endpoint = "/v5/asset/coin/query-info";
         $params = [
@@ -124,17 +129,19 @@ class BybitAPI
 
         $response = $this->sendRequest($endpoint, $params);
 
-        if ( $response && isset($response['result']['rows'])) {
+        if ($response && isset($response['result']['rows'])) {
 
             $rows = $response['result']['rows'];
             $chains = $rows[0]['chains'];
 
-            if ( $chain !== null && array_search($chain, array_column( $chains, 'chain' )) ) {
-                $result =  $chains[array_search($chain, array_column( $chains, 'chain' ))];
+            if ($chain !== null && array_search($chain, array_column($chains, 'chain'))) {
+                $result =  $chains[array_search($chain, array_column($chains, 'chain'))];
 
                 $result['coin'] = $coin;
                 return $result;
             }
+        } else {
+            return $response;
         }
 
         return NULL;
@@ -142,7 +149,8 @@ class BybitAPI
 
 
     // Get Deposit Wallet Address
-    public function getDepositAddress($coin, $chain) {
+    public function getDepositAddress($coin, $chain)
+    {
         sleep(5);
         $endpoint = "/v5/asset/deposit/query-address";
 
@@ -158,9 +166,9 @@ class BybitAPI
         $params["sign"] = $this->generateSignature($params);
 
         $response = $this->sendRequest($endpoint, $params);
-        if ( is_array( $response ) && isset( $response['retMsg'] ) && $response['retMsg'] === 'success' ) {
-            $chains = $response['result']['chains'];    
-            $result =  $chains[array_search( $chain, array_column( $chains, 'chain' ) )];
+        if (is_array($response) && isset($response['retMsg']) && $response['retMsg'] === 'success') {
+            $chains = $response['result']['chains'];
+            $result =  $chains[array_search($chain, array_column($chains, 'chain'))];
 
             return [
                 "address" => $result['addressDeposit'],
@@ -170,6 +178,7 @@ class BybitAPI
                 "depositLimit" => $result['batchReleaseLimit'],
             ];
         }
+
 
         return NULL;
     }
@@ -182,7 +191,7 @@ class BybitAPI
         $endpoint = "/v5/asset/transfer/query-account-coins-balance";
 
 
-         $params = [
+        $params = [
             "api_key" => $this->apiKey,
             "coin" => $coin,
             "timestamp" => round(microtime(true) * 1000),
@@ -190,11 +199,11 @@ class BybitAPI
             'withBonus' => $withBonus
         ];
 
-        if ( $chain !== null ) {
+        if ($chain !== null) {
             $params['coin'] .= ',' . $chain;
         }
 
-        if ( $subAccountMemberId !== null ) {
+        if ($subAccountMemberId !== null) {
             $params['memberId'] = $subAccountMemberId;
         }
 
@@ -209,8 +218,24 @@ class BybitAPI
     }
 
 
-    // Make a withdrawal on the exchange 
-    public function makeWithdrawal($coin, $amount, $address, $chain, $tag = null, $exchangeAccountType = "FUND", $forceChain = 0)
+
+
+    /**
+     * Make a new withdraw on chain
+     * Please check the API documentation for the required parameters 
+     * https://bybit-exchange.github.io/docs/v5/asset/withdraw
+     *
+     * @param string $coin
+     * @param string $amount
+     * @param string $address
+     * @param string $chain
+     * @param string|null $tag
+     * @param string $exchangeAccountType
+     * @param integer $forceChain
+     * @param integer $feeType
+     * @return mixed
+     */
+    public function makeWithdrawal(string $coin, string $amount, string $address, string $chain, string|null $tag = null, string $exchangeAccountType = "FUND", int $forceChain = 1, int $feeType = 1)
     {
         sleep(3);
         $endpoint = "/v5/asset/withdraw/create";
@@ -234,24 +259,22 @@ class BybitAPI
             $params["tag"] = $tag;
         }
 
-        $response = $this->sendRequest($endpoint, $params);
-        var_dump($response);
-        die("stop here");
-
         return $this->sendRequest($endpoint, $params);
     }
 
 
-    // Cancel Withdraw Order
-    public function cancelWithdrawOrder() {}
-
-
-
-    // Get all closed orders on the exchange i.e withdraw
-    public function getAccountBalance() {}
-
-
-    public function getDepositRecordsOnChain($coin, $limit = 20, $startTime = null, $endTime = null) {
+    /**
+     * Get Deposit Records on chain
+     *
+     * @param string $coin
+     * @param integer $limit
+     * @param mixed $startTime
+     * @param mixed $endTime
+     * @param string|null|null $nextPageCursor
+     * @return mixed
+     */
+    public function getDepositRecordsOnChain(string $coin, int $limit = 20, mixed $startTime = null, mixed $endTime = null, string|null $nextPageCursor = null)
+    {
         sleep(3);
         $endpoint = "/v5/asset/deposit/query-record";
         $params = [
@@ -270,17 +293,124 @@ class BybitAPI
             $params["endTime"] = $endTime;
         }
 
+        if ($nextPageCursor !== null) {
+            $params["cursor"] = $nextPageCursor;
+        }
+
         // Generate API signature
         $params["sign"] = $this->generateSignature($params);
         return $this->sendRequest($endpoint, $params);
     }
 
-    public function getDepositRecordsOnChainFromAddress($coin, $toAddress, $amount, $chain = null, $limit = 20, $startTime = null, $endTime = null, $txID = "", $blockHash = "", $status = 3) {
-        $response = $this->getDepositRecordsOnChain($coin, $limit, $startTime, $endTime);
 
-        $records = $response['result']['rows'];
+    /**
+     * Get Deposit Records on chain from Address
+     *
+     * @param string $coin
+     * @param string $fromAddress
+     * @param mixed $amount
+     * @param integer $limit
+     * @param string $blockHash
+     * @param boolean $removeBlockHashRecords
+     * @param mixed $startTime
+     * @param mixed $endTime
+     * @param integer $status
+     * @return void
+     */
+    public function getDepositRecordsOnChainFromAddress(string $coin, string $fromAddress = "", mixed $amount = 0, int $limit = 20, string $blockHash = "", bool $removeBlockHashRecords = false, mixed $startTime = null, mixed $endTime = null, int $status = 3)
+    {
 
-        var_dump($records);
-        die("stop here");
+        $count = 0;
+        $nextPageCursor = null;
+        while ($this->depositHistoryCount < $limit) {
+            sleep(3);
+            $response = $this->getDepositRecordsOnChain($coin, $limit, $startTime, $endTime, $nextPageCursor);
+
+            if (!isset($response['result']['rows'])) {
+                // echo "No result and rows here\n";
+                return null;
+                break;
+            }
+
+            // get the next page cursor
+            $nextPageCursor = isset($response['result']['nextPageCursor']) && !empty($response['result']['nextPageCursor']) ? $response['result']['nextPageCursor'] : $nextPageCursor;
+
+            $records = $response['result']['rows'];
+            if (count($records) === 0) {
+                return null;
+                // echo "No records found using this cursor = " . $nextPageCursor . " \n";
+                break;
+            }
+
+            $depositAddressTransactionRecords = false;
+            if ($fromAddress !== "") {
+                $depositAddressTransactionRecords = array_search($fromAddress, array_column($records, 'fromAddress'));
+            }
+            $depositAmountTransactionRecords = array_search($amount, array_column($records, 'amount'));
+
+            if ($removeBlockHashRecords && !empty($blockHash)) {
+                $blockHashTransactionRecords = array_search($blockHash, array_column($records, 'blockHash'));
+                if ($blockHashTransactionRecords !== false) {
+                    unset($records[$blockHashTransactionRecords]);
+                }
+            }
+
+
+            $this->depositHistoryCount += count($records);
+
+            if (($depositAddressTransactionRecords !== false && $depositAmountTransactionRecords !== false) || $depositAmountTransactionRecords !== false) {
+                $record =  $records[$depositAddressTransactionRecords];
+                return  (int) $record['status'] === $status ?  $record : null;
+            }
+        }
+
+        return null;
+    }
+
+
+
+    /**
+     * Get withdraw records to see if a withdrawal has been made
+     *
+     * @param string $coin
+     * @param string $address
+     * @param string $txID
+     * @param integer $limit
+     * @param mixed $startTime
+     * @param mixed $endTime
+     * @return mixed
+     */
+    public function getWithdrawRecords(string $coin, string $address = "", string $txID = "", int $limit = 20, $startTime = null, $endTime = null)
+    {
+
+        sleep(3);
+        $endpoint = "/v5/asset/withdraw/query-record";
+        $params = [
+            "api_key" => $this->apiKey,
+            "coin" => $coin,
+            "timestamp" => round(microtime(true) * 1000),
+            'limit' => $limit,
+            'recv_window' => 10000
+        ];
+
+        if ($startTime !== null) {
+            $params["startTime"] = $startTime;
+        }
+
+        if ($endTime !== null) {
+            $params["endTime"] = $endTime;
+        }
+
+        // Generate API signature
+        $params["sign"] = $this->generateSignature($params);
+
+
+        $response = $this->sendRequest($endpoint, $params);
+
+        if (is_array($response) && isset($response['result']['rows'])) {
+
+            var_dump($response);
+            die("stop here");
+        }
     }
 }
